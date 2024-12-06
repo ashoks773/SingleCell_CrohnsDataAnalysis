@@ -3,8 +3,8 @@
 **Single-Cell RNA-Seq Data Analysis Tutorial** provides step-by-step guidance for analyzing publicly available single-cell RNA-seq datasets. This tutorial uses the dataset titled **"Single-cell RNA-seq analysis of stromal vascular cells (SVCs) isolated from primary adipose tissue"**, reanalyzing healthy and Crohn's disease samples to explore differences in cell-cell communication and pathway enrichment.  
 
 The detailed tutorial is in the file `scRNAseq_CrF_Tutorial.Rmd`, with each step organized into sections.  
-- **Raw Data**: Found in the `Data` folder.  
-- **Processed Data**: Including Seurat objects, stored in the `ProcessedData` folder.
+- **Raw Data**: Found in the `Data` folder. Note: For each sample **"matrix.mtx.gz"** files are larger in size! And hence not included in Data/GSE156776_RAW/ folder! Download these files from https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE156776
+- **Processed Data**: Including Seurat objects, stored in the `ProcessedData` folder. Except: **GSE156776_CrF.rds** raw merged Seurat Object which is larger in size.
 ---
 
 ## Overview of Steps  
