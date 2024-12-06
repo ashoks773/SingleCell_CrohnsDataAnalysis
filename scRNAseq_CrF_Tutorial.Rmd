@@ -1,0 +1,691 @@
+---
+title: "Single-cell RNA-seq analysis of stromal vascular cells (SVCs) isolated from
+  primary adipose tissue"
+steps: "We have one section for each STEP along with few additional sections for Different Checks like Normalization and Clustering; Provided below are the Main Steps: 
+  STEP1: Download data, Load and then Create Seurat Object
+  STEP2: Perform QC and filtering
+  STEP3: Normalization, Scaling and downstream analysis including Ordination and Clustering
+  STEP4: Cell Type Annotations; 1. using Known GI-Specific Markers 2. using SingleR
+  STEP5: Markers Identification; 1: Cluster specific; # 2: Disease specific; 3: For Selected Clusters or Combination of clusters
+  STEP6: Perform Pathway Enrichment Analysis
+  STEP7: Cell-Cell Interaction/Communication Analysis
+
+output: html_document
+date: "2024-12-05"
+Tutorialby: "Ashok Kumar Sharma"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r Load libraries, include=FALSE}
+# General Libraries
+library(ggplot2)
+library(tidyverse)
+library(gridExtra)
+# For Creating Seurat Object
+library(Seurat)
+library(mclust) # For comparing different clustering Methods
+# For Cell Type Annotaion
+library(SingleR)
+library(celldex)
+library(HCAData)
+# For Pathway Enrichment Analysis
+library(clusterProfiler)
+library(org.Hs.eg.db)
+# For Cell Cell communication/interaction Analysis
+library(CellChat)
+# If you need to install the packages
+# install.packages("packageName") OR
+# biomanager::install("packageName") OR
+# remotes::install_github("sqjin/CellChat") # GitHub Link
+```
+
+```{r STEP1, include=FALSE}
+#Step1: Download data, Load and then Create Seurat Object; Add Relevant Metadata Info from SraRunTable.csv (If Needed)
+setwd("~/OneDrive - Cedars-Sinai Health System/Cedars2024_Work/SingleCell_data_analysis/CreepingFat/scRNAseq_CrF_Tutorial/")
+
+# Define the path to the folder containing the files
+file_path <- "Data/GSE156776_RAW/"
+# List all relevant single-cell files in the directory with their full paths
+files <- list.files(path = file_path, full.names = TRUE, pattern = "-(barcodes.tsv.gz|features.tsv.gz|matrix.mtx.gz)$")
+# Extract unique sample names from the single-cell file names
+sample_names <- unique(sub("(-barcodes.tsv.gz|-features.tsv.gz|-matrix.mtx.gz)$", "", basename(files)))
+
+# Create an empty list to store Seurat objects
+seurat_objects <- list()
+
+# Loop through each unique sample name to read the associated files
+for (sample in sample_names) {
+  # Construct file paths for the barcodes, features, and matrix files
+  barcodes_file <- paste0(file_path, sample, "-barcodes.tsv.gz")
+  features_file <- paste0(file_path, sample, "-features.tsv.gz")
+  matrix_file <- paste0(file_path, sample, "-matrix.mtx.gz")
+  # Check if all three required files exist for the sample
+  if (file.exists(barcodes_file) && file.exists(features_file) && file.exists(matrix_file)) {
+    # Read the data for each sample
+    cts <- ReadMtx(mtx = matrix_file, features = features_file, cells = barcodes_file)
+    # Create a Seurat object and store it in the list, naming it by the sample name
+    seurat_objects[[sample]] <- CreateSeuratObject(counts = cts)
+  } else {
+    message(paste("Warning: Missing files for sample", sample))
+  }
+}
+# Merge all Seurat objects into one
+CrF_merged_seurat <- Reduce(function(x, y) merge(x, y), seurat_objects)
+
+# Add cell ID prefixes to distinguish cells from each sample
+CrF_merged_seurat <- merge(seurat_objects[[sample_names[1]]], y = seurat_objects[-1],
+                       add.cell.ids = sample_names, project = 'GSE156776')
+
+# Display merged Seurat object summary
+CrF_merged_seurat
+summary(CrF_merged_seurat$nCount_RNA)
+summary(CrF_merged_seurat$nFeature_RNA)
+str (CrF_merged_seurat)
+
+# Format Metadata in Seurat Object
+# Add sample names info using sample name and cell Type
+CrF_merged_seurat$sample <- rownames(CrF_merged_seurat@meta.data)
+rownames(CrF_merged_seurat@meta.data) # Check this before split the sample names
+# Split sample column
+CrF_merged_seurat@meta.data <- separate(CrF_merged_seurat@meta.data, col= 'sample', into =c('GEO_Accession', 'Patient_ID', 'Barcode'))
+
+# Add Metadata
+# Load your metadata
+metadata_file <- "Data/SraRunTable.csv"  # Replace with your actual file path
+metadata <- read.csv(metadata_file, stringsAsFactors = FALSE)
+# Rename Sample.Name to GEO_Accession for matching
+colnames(metadata)[which(names(metadata) == "Sample.Name")] <- "GEO_Accession"
+metadata_selected <- unique(metadata[, c("GEO_Accession", "condition", "tissue_status")])
+
+# Convert row names of Seurat metadata to a column
+CrF_meta_df <- as.data.frame(CrF_merged_seurat@meta.data)
+CrF_meta_df$RowNames <- rownames(CrF_meta_df)
+
+# Merge the metadata into the Seurat object's metadata
+merged_metadata <- CrF_meta_df %>%
+  left_join(metadata_selected, by = "GEO_Accession")
+# Set row names back to the original IDs after the merge
+rownames(merged_metadata) <- merged_metadata$RowNames
+# Remove the RowNames column now that we've reset the row names
+merged_metadata$RowNames <- NULL
+
+# Update the Seurat object with the merged metadata
+CrF_merged_seurat@meta.data <- merged_metadata
+# Verify the merge
+head(CrF_merged_seurat@meta.data)
+
+# Check for any NAs that might indicate non-matching entries
+sum(is.na(CrF_merged_seurat@meta.data$condition))
+sum(is.na(CrF_merged_seurat@meta.data$tissue_status))
+#######****************#########
+# Check if Metadata is Correct
+unique(CrF_merged_seurat@meta.data$GEO_Accession) # Total 4 Samples
+unique(CrF_merged_seurat@meta.data$Patient_ID) # Total 4 patient IDs
+unique(CrF_merged_seurat@meta.data$condition) # Croh's and Healthy
+unique(CrF_merged_seurat@meta.data$tissue_status) # Inflammed and non-Inflammed
+
+# Save Seurat Object
+saveRDS(CrF_merged_seurat, file = "scRNAseq_CrF_Tutorial/ProcessedData/GSE156776_CrF.rds")
+```
+
+```{r Check Structure}
+# Check Seurat Structure
+print(dim(CrF_merged_seurat)) # Get number of Genes * Cells
+# Print the resulting data frame
+# Create a data frame from the extracted vectors
+check_labels <- data.frame(
+  GEO_Accession = CrF_merged_seurat@meta.data$GEO_Accession,
+  Patient_ID = CrF_merged_seurat@meta.data$Patient_ID,
+  condition = CrF_merged_seurat@meta.data$condition,
+  tissue_status = CrF_merged_seurat@meta.data$tissue_status
+)
+check_labels <- unique(check_labels)
+print(check_labels)
+```
+
+```{r STEP2, include=FALSE}
+# Step2: Perform QC and filtering
+
+# Load the saved Seurat object
+CrF_merged_seurat <- readRDS(file = "ProcessedData/GSE156776_CrF.rds")
+print(CrF_merged_seurat)
+
+# Number of mitochondrial %; less transcripts and Gene counts
+CrF_merged_seurat$mitoPercent <- PercentageFeatureSet(CrF_merged_seurat, pattern = "^MT-")
+CrF_merged_seurat$riboPercent <- PercentageFeatureSet(CrF_merged_seurat, pattern = "^RP[SL]")
+
+# See distribution before filtering
+#FeatureScatter(CrF_merged_seurat, feature1 = "nCount_RNA", feature2 = "nCount_RNA") #Set a lower bound to exclude low-quality cells or empty droplets
+#FeatureScatter(CrF_merged_seurat, feature1 = "nFeature_RNA", feature2 = "nFeature_RNA") #Exclude cells with very low gene detection
+#FeatureScatter(CrF_merged_seurat, feature1 = "percent.mt", feature2 = "percent.mt") #Cells with high mitochondrial gene expression often indicate stressed or dying cells
+#FeatureScatter(CrF_merged_seurat, feature1 = "percent.rb", feature2 = "percent.rb") #High ribosomal gene expression might indicate low cell quality or stress
+VlnPlot(CrF_merged_seurat, features = c("nCount_RNA", "nFeature_RNA", "mitoPercent", "riboPercent"), ncol = 4)
+
+#************
+# Visualize before doing filtering
+qc_metrics <- data.frame(
+  nCount_RNA = CrF_merged_seurat$nCount_RNA,
+  nFeature_RNA = CrF_merged_seurat$nFeature_RNA,
+  mitoPercent = CrF_merged_seurat$mitoPercent,
+  sample = CrF_merged_seurat$Patient_ID # If you want to include sample information
+)
+# Histogram for UMI counts
+ggplot(qc_metrics, aes(x = nCount_RNA)) +
+  geom_histogram(bins = 30, fill = "blue", alpha = 0.7) +
+  theme_minimal() +
+  labs(title = "Distribution of UMI Counts", x = "UMI Counts", y = "Frequency")
+
+# Histogram for number of features
+ggplot(qc_metrics, aes(x = nFeature_RNA)) +
+  geom_histogram(bins = 30, fill = "green", alpha = 0.7) +
+  theme_minimal() +
+  labs(title = "Distribution of Number of Features", x = "Number of Features", y = "Frequency")
+
+# Histogram for mitochondrial percentage
+ggplot(qc_metrics, aes(x = mitoPercent)) +
+  geom_histogram(bins = 30, fill = "red", alpha = 0.7) +
+  theme_minimal() +
+  labs(title = "Distribution of Mitochondrial Percentage", x = "Mitochondrial Percentage", y = "Frequency")
+
+# Scatter plot to visualize the relationship between nCount_RNA and nFeature_RNA
+ggplot(qc_metrics, aes(x = nFeature_RNA, y = nCount_RNA)) +
+  geom_point(alpha = 0.5) +
+  theme_minimal() +
+  labs(title = "nCount vs. nFeature", x = "Number of Features", y = "UMI Counts")
+
+# UMI Counts: Look for a reasonable range of counts that separates outliers. For example, you might notice a bimodal distribution where lower counts represent low-quality cells.
+# Feature Counts: Determine a cutoff based on the distribution, focusing on the area of the histogram that represents high-quality cells.
+# Mitochondrial Percentage: Generally, cells with high mitochondrial content (e.g., >15%) might indicate damaged cells, so you can set a threshold based on the histogram distribution.
+
+
+dim(CrF_merged_seurat) # Check dimension
+#############Do Filtering
+## Counts :: UMIs
+min_counts <- 200
+max_counts <- 5000
+## Features :: genes
+min_features <- 200
+max_features <- 7500
+## Gated this down a little lower, to keep more cells.
+max_mito_ratio <- 20  # max mitochondrial content in percentage
+
+# Perform filtering using subset in Seurat
+merged_seurat_filtered <- subset(
+  CrF_merged_seurat,
+  subset = nCount_RNA > min_counts & nCount_RNA < max_counts &
+    nFeature_RNA > min_features & nFeature_RNA < max_features &
+    mitoPercent < max_mito_ratio,
+)
+#merged_seurat_filtered <- subset(
+##  CrF_merged_seurat,
+#  subset = nCount_RNA > 5000 & nCount_RNA < 50000 &
+#    nFeature_RNA > 500 & nFeature_RNA < 7500 &
+#    mitoPercent < 10 #& riboPercent > 20
+#)
+dim(merged_seurat_filtered) # Check dimension again
+
+layers <- Layers(merged_seurat_filtered)
+print(layers)
+
+# Merge Layers
+merged_seurat_filtered <- JoinLayers(merged_seurat_filtered)
+dim(merged_seurat_filtered) # Check dimension again
+
+# Save Seurat Object
+saveRDS(merged_seurat_filtered, file = "ProcessedData/GSE156776_CrF_filtered.rds")
+```
+
+```{r Additional --> NormalizationCheck, PCA; UMAP Check include=FALSE}
+# Check the effect of normalization and scaling
+# Also check how PCA and UMAP before clustering
+
+# Load the saved Seurat object
+merged_seurat_filtered <- readRDS(file = "ProcessedData/GSE156776_CrF_filtered.rds")
+print(merged_seurat_filtered)
+
+# Step 1: Preserve raw expression for a specific gene
+gene_to_plot <- "CCL4"  # Replace with your gene of interest
+raw_expression <- GetAssayData(merged_seurat_filtered, slot = "counts")[gene_to_plot, ]
+
+# Step 2: Normalize and Scale Data
+merged_seurat_filtered <- NormalizeData(merged_seurat_filtered)
+merged_seurat_filtered <- FindVariableFeatures(object = merged_seurat_filtered)
+merged_seurat_filtered <- ScaleData(merged_seurat_filtered)
+
+# Step 3: Run PCA and UMAP
+merged_seurat_filtered <- RunPCA(merged_seurat_filtered)
+merged_seurat_filtered <- RunUMAP(merged_seurat_filtered, dims = 1:10)
+
+DimPlot(merged_seurat_filtered, reduction = 'pca', group.by = 'condition', cols = c('red', 'green')) # Check PCA
+DimPlot(merged_seurat_filtered, reduction = 'umap', group.by = 'condition', cols = c('red', 'green')) # Check UMAP
+
+# Step 4: Extract UMAP embeddings
+umap_coords <- Embeddings(merged_seurat_filtered, reduction = "umap")
+umap_df <- as.data.frame(umap_coords)
+colnames(umap_df) <- c("UMAP_1", "UMAP_2")
+
+# Add raw expression as a column
+umap_df$RawExpression <- raw_expression[colnames(merged_seurat_filtered)]
+
+# Add normalized expression as a column
+normalized_expression <- GetAssayData(merged_seurat_filtered, slot = "data")[gene_to_plot, ]
+umap_df$NormalizedExpression <- normalized_expression
+
+# Step 5: Plot raw vs. normalized expression
+library(ggplot2)
+
+# Raw Expression Plot
+p_raw <- ggplot(umap_df, aes(x = UMAP_1, y = UMAP_2, color = RawExpression)) +
+  geom_point() +
+  scale_color_gradient(low = "lightgrey", high = "blue") +
+  ggtitle("UMAP with Raw Gene Expression") +
+  theme_minimal()
+
+# Normalized Expression Plot
+p_normalized <- ggplot(umap_df, aes(x = UMAP_1, y = UMAP_2, color = NormalizedExpression)) +
+  geom_point() +
+  scale_color_gradient(low = "lightgrey", high = "red") +
+  ggtitle("UMAP with Normalized Gene Expression") +
+  theme_minimal()
+
+# Step 6: Combine plots for comparison
+library(patchwork)
+p_raw | p_normalized
+```
+
+```{r STEP3, include=FALSE}
+# Step3: Normalization, Scaling and downstream analysis including Ordination and Clustering
+# Load Merged Filtered Seurat object Again
+merged_seurat_filtered <- readRDS(file = "ProcessedData/GSE156776_CrF_filtered.rds")
+print(merged_seurat_filtered)
+
+merged_seurat_filtered <- NormalizeData(object = merged_seurat_filtered)
+merged_seurat_filtered <- FindVariableFeatures(object = merged_seurat_filtered)
+top10 <- head(VariableFeatures(merged_seurat_filtered), 10) # Top 10 highly variable features
+top10 
+merged_seurat_filtered <- ScaleData(object = merged_seurat_filtered)
+merged_seurat_filtered <- RunPCA(object = merged_seurat_filtered)
+ElbowPlot(merged_seurat_filtered)
+merged_seurat_filtered <- FindNeighbors(object = merged_seurat_filtered, dims = 1:10)
+merged_seurat_filtered <- FindClusters(object = merged_seurat_filtered, resolution = 0.5) # Change Ressolution Accordingly
+merged_seurat_filtered <- RunUMAP(object = merged_seurat_filtered, dims = 1:10)
+table(merged_seurat_filtered@meta.data$seurat_clusters)
+DimPlot(merged_seurat_filtered,label.size = 4,repel = T,label = T)
+FeaturePlot(merged_seurat_filtered, features = c("CCL4", "TPM2", "IL21", "IL10"))
+
+p1 = DimPlot(merged_seurat_filtered, reduction = 'umap', group.by = 'GEO_Accession')
+p2 = DimPlot(merged_seurat_filtered, reduction = 'umap', group.by = 'condition', cols = c('red', 'green'))
+p3 = DimPlot(merged_seurat_filtered, reduction = 'umap', group.by = 'tissue_status', cols = c('red', 'green'))
+p4 = DimPlot(merged_seurat_filtered, reduction = 'umap', group.by = 'seurat_clusters')
+grid.arrange(p1, p2, p3, p4, ncol=2, nrow=2)
+
+# Save Seurat Object
+# saveRDS(merged_seurat_filtered, file = "ProcessedData/GSE156776_CrF_filtered_Analyzed.rds")
+```
+
+
+```{r Additional --> Clustering Method Check include=FALSE}
+# Check and Compare different Clustering Methods
+merged_seurat_filtered <- readRDS(file = "ProcessedData/GSE156776_CrF_filtered.rds")
+
+merged_seurat_filtered <- NormalizeData(object = merged_seurat_filtered)
+merged_seurat_filtered <- FindVariableFeatures(object = merged_seurat_filtered)
+merged_seurat_filtered <- ScaleData(object = merged_seurat_filtered)
+merged_seurat_filtered <- RunPCA(object = merged_seurat_filtered)
+merged_seurat_filtered <- FindNeighbors(object = merged_seurat_filtered, dims = 1:10)
+merged_seurat_filtered <- RunUMAP(object = merged_seurat_filtered, dims = 1:10)
+
+# Louvain (Default)/Leiden Clustering
+# First Try Leiden: To use the Leiden algorithm, you need to set the algorithm parameter in FindClusters() to 4:
+merged_seurat_filtered <- FindClusters(object = merged_seurat_filtered, resolution = 0.5, algorithm = 4)
+leiden_clusters <- Idents(merged_seurat_filtered) # Save leiden Clusters
+table(Idents(merged_seurat_filtered))
+merged_seurat_filtered$leiden_clusters <- Idents(merged_seurat_filtered) # Rename Leiden
+
+# Now Try Default Louvain
+merged_seurat_filtered <- FindClusters(object = merged_seurat_filtered, resolution = 0.5)
+louvain_clusters <- Idents(merged_seurat_filtered) # Save leiden Clusters
+table(Idents(merged_seurat_filtered))
+merged_seurat_filtered$louvain_clusters <- Idents(merged_seurat_filtered) # Rename
+# Default will automatically Save in the seurat_clusters
+
+# K-means Clustering
+# Extract PCA embeddings
+pca_embeddings <- Embeddings(merged_seurat_filtered, reduction = "pca")
+# Run K-means
+kmeans_res <- kmeans(pca_embeddings, centers = 10)  # Replace 5 with desired number of clusters
+# Add K-means cluster IDs to Seurat object
+merged_seurat_filtered$kmeans_clusters <- as.factor(kmeans_res$cluster)
+table(merged_seurat_filtered$kmeans_clusters)
+
+# Hierchial Clustering
+# Compute distance matrix
+dist_matrix <- dist(pca_embeddings)
+# Perform hierarchical clustering
+hclust_res <- hclust(dist_matrix, method = "ward.D2")
+# Cut the dendrogram into clusters
+hclust_clusters <- cutree(hclust_res, k = 10)  # Replace 5 with desired number of clusters
+# Add hierarchical cluster IDs to Seurat object
+merged_seurat_filtered$hclust_clusters <- as.factor(hclust_clusters)
+table(merged_seurat_filtered$hclust_clusters)
+
+# Louvain
+DimPlot(merged_seurat_filtered, reduction = "umap", group.by = "louvain_clusters") # also "seurat_clusters" (by default)
+# Leiden Clustering
+DimPlot(merged_seurat_filtered, reduction = "umap", group.by = "leiden_clusters")
+# K-means Clustering
+DimPlot(merged_seurat_filtered, reduction = "umap", group.by = "kmeans_clusters")
+# Hierarchical Clustering
+DimPlot(merged_seurat_filtered, reduction = "umap", group.by = "hclust_clusters")
+
+library(mclust)
+#louvain_clusters <- Idents(merged_seurat_filtered) Already Saved
+# Compare Louvain and K-means
+ari_kmeans <- adjustedRandIndex(as.numeric(louvain_clusters), as.numeric(merged_seurat_filtered$kmeans_clusters))
+# Compare Louvain and Hierarchical
+ari_hclust <- adjustedRandIndex(as.numeric(louvain_clusters), as.numeric(merged_seurat_filtered$hclust_clusters))
+# Compare Louvain and Leiden
+ari_louvain_leiden <- adjustedRandIndex(as.numeric(louvain_clusters), as.numeric(leiden_clusters)) 
+
+print(paste("ARI (Louvain vs K-means):", ari_kmeans))
+print(paste("ARI (Louvain vs Hierarchical):", ari_hclust))
+print(paste("ARI (Louvain vs Leiden):", ari_louvain_leiden))
+```
+```{r STEP4, include=FALSE}
+# Step4: Cell Type Annotations; #1. using Known GI-Specific Markers; #2. using SingleR
+
+# Load Merged Filtered & Analyzed Seurat object at STEP3
+merged_seurat_filtered <- readRDS(file = "ProcessedData/GSE156776_CrF_filtered_Analyzed.rds")
+print(merged_seurat_filtered)
+
+# 1. Annotate Clusters with Known GI-Specific Markers
+# Example: Define GI-specific markers (replace with your markers)
+gi_markers <- list(
+  Enterocytes = c("IL7R", "CD2"),
+  GobletCells = c("CD8B", "CCL5"),
+  PanethCells = c("HCAR3", "S100A8"),
+  ImmuneCells = c("CPA3", "TPSAB1")
+)
+# Annotate clusters
+DefaultAssay(merged_seurat_filtered) <- "RNA"
+merged_seurat_filtered <- AddModuleScore(
+  object = merged_seurat_filtered,
+  features = gi_markers,
+  name = "GI_CellType"
+)
+# Visualize module scores
+FeaturePlot(merged_seurat_filtered, features = c("GI_CellType1", "GI_CellType2"), reduction = "umap")
+#FeaturePlot(merged_seurat_filtered, features = grep("GI_CellType", rownames(merged_seurat_filtered@meta.data), value = TRUE), reduction = "umap")
+
+# 2. Annotate Clusters using SingleR
+library(SingleR)
+library(celldex)
+
+# Load a reference dataset (e.g., Human Primary Cell Atlas)
+ref <- celldex::HumanPrimaryCellAtlasData()
+# Immune Cell Reference (e.g., ImmGen or HumanImmuneCellAtlas): If you're working with immune cells in the intestinal or adipose tissue (e.g., from the mesenteric adipose tissue), you can use an immune-specific reference like the ImmGen dataset or HumanImmuneCellAtlas.
+#ref <- ImmGenData()  # Replace with the correct reference dataset for your tissue type
+
+### Gut Atlas can be downloaded from here
+# https://www.gutcellatlas.org/pangi.html
+## Load the reference dataset (replace with the actual file path) # Or Load Your Annotation Files
+#ref_data <- readRDS("~/Downloads/1_Healthy_Pan-GI_atlas_all_lineages_20241119.rds")  # or other format like .csv
+
+#BiocManager::install("HCAData") #Use HCAData to download Choice of Reference Database
+#https://www.bioconductor.org/packages/release/data/experiment/manuals/HCAData/man/HCAData.pdf
+library(HCAData)
+#ref <- HCAData(dataset = "ica_bone_marrow") 
+
+# Extract data for SingleR
+data <- GetAssayData(merged_seurat_filtered, slot = "data")
+# Annotate cells
+singleR_results <- SingleR(test = data, ref = ref, labels = ref$label.main)
+# Add annotations to Seurat object
+merged_seurat_filtered$SingleR_labels <- singleR_results$labels
+# Visualize annotations
+p1 = DimPlot(merged_seurat_filtered, reduction = 'umap', group.by = 'GEO_Accession')
+p2 = DimPlot(merged_seurat_filtered, reduction = 'umap', group.by = 'condition',
+             cols = c('red', 'green'))
+p3 = DimPlot(merged_seurat_filtered, reduction = 'umap', group.by = 'seurat_clusters')
+p4 = DimPlot(merged_seurat_filtered, group.by = "SingleR_labels", reduction = "umap")
+grid.arrange(p1, p2, p3, p4, ncol=2, nrow=2)
+
+# Save Seurat Object
+# saveRDS(merged_seurat_filtered, file = "ProcessedData/GSE156776_CrF_filtered_Analyzed_CellTypeAnnot.rds")
+```
+
+
+```{r STEP5, include=FALSE}
+# Step5: # Markers Identification; 1: Cluster specific; # 2: Disease specific; 3: For Selected Clusters or Combination of clusters
+
+# Load Merged Filtered & Analyzed & Annotated Seurat object at STEP4
+# merged_seurat_filtered <- readRDS(file = "ProcessedData/GSE156776_CrF_filtered_Analyzed_CellTypeAnnot.rds")
+print(merged_seurat_filtered)
+
+# Identify cluster-specific markers for all clusters
+markers <- FindAllMarkers(
+  object = merged_seurat_filtered, 
+  assay = "RNA", 
+  logfc.threshold = 1,  # Minimum log-fold change (default is 0.25)
+  test.use = "wilcox",  # Use Wilcoxon rank-sum test
+  min.pct = 0.25,       # Minimum percentage of cells expressing the feature
+  only.pos = FALSE       # Only return positive markers
+)
+# Filter markers based on adjusted p-value and log fold change
+#markers <- markers[markers$p_val_adj < 0.05 & abs(markers$avg_log2FC) > 1, ]
+# View top markers for each cluster
+head(markers)
+# Get top 10 genes from Each cluster
+top_genes <- markers %>%
+  group_by(cluster) %>%
+  top_n(n = 5, wt = avg_log2FC) # Change `n = 10` to 20 if you need 20 genes
+
+DoHeatmap(merged_seurat_filtered, 
+                          features = top_genes$gene, 
+                          group.by = "seurat_clusters") +
+  scale_fill_gradientn(colors = c("blue", "white", "red"))
+
+top_markers <- markers %>% top_n(10, avg_log2FC)
+FeaturePlot(merged_seurat_filtered, features = rownames(top_markers), reduction = "umap")
+
+write.csv(markers, "ProcessedData/ClusterSpecific_markers.csv")
+
+# 2: Disease specific Markers Identification
+# Check the metadata
+head(merged_seurat_filtered@meta.data)
+# Check unique identities (cluster names)
+unique(merged_seurat_filtered$seurat_clusters)  # Clusters
+unique(merged_seurat_filtered$condition)    # Disease/Healthy status if added
+
+# Differential expression between Crohn's disease and Non-IBD control
+disease_markers <- FindMarkers(
+  object = merged_seurat_filtered,
+  ident.1 = "Crohn's disease",
+  ident.2 = "Non-IBD control",
+  group.by = "condition",
+  logfc.threshold = 1,  # Minimum log-fold change (default is 0.25)
+  test.use = "wilcox",  # Use Wilcoxon rank-sum test
+  min.pct = 0.25       # Minimum percentage of cells expressing the feature
+)
+
+# Visualize markers
+top_disease_markers <- disease_markers %>% top_n(5, avg_log2FC)
+FeaturePlot(merged_seurat_filtered, features = rownames(top_disease_markers), reduction = "umap")
+write.csv(disease_markers, "ProcessedData/disease_vs_control_markers.csv")
+
+# If you want to identify markers between specific clusters or combination of clusters
+# Differential expression between Crohn's disease and Non-IBD control
+cluster2_vs_8_markers <- FindMarkers(
+  object = merged_seurat_filtered,
+  ident.1 = "2",
+  ident.2 = "8",
+  group.by = "seurat_clusters",
+  logfc.threshold = 1,  # Minimum log-fold change (default is 0.25)
+  test.use = "wilcox",  # Use Wilcoxon rank-sum test
+  min.pct = 0.25       # Minimum percentage of cells expressing the feature
+)
+# Visualize markers
+top_clusterSpecific_markers <- cluster2_vs_8_markers %>% top_n(10, avg_log2FC)
+FeaturePlot(merged_seurat_filtered, features = rownames(top_clusterSpecific_markers), reduction = "umap")
+
+# ******* Visualize Results
+library(ggplot2)
+markers$gene <- rownames(markers)
+ggplot(markers, aes(x = avg_log2FC, y = -log10(p_val_adj))) +
+  geom_point(aes(color = p_val_adj < 0.05)) +
+  theme_minimal() +
+  labs(x = "Log2 Fold Change", y = "-Log10 Adjusted P-Value") +
+  scale_color_manual(values = c("gray", "red")) +
+  theme(legend.position = "none")
+
+# Select top markers
+top_genes <- rownames(markers[markers$p_val_adj < 0.05,])[1:5] #(Cluster Specific)
+top_disease_markers <- rownames(markers[disease_markers$p_val_adj < 0.05,])[1:5] #(Disease Specific)
+
+# Feature plots
+FeaturePlot(merged_seurat_filtered, features = top_genes)
+FeaturePlot(merged_seurat_filtered, features = top_disease_markers)
+
+# Dot plot
+DotPlot(
+  merged_seurat_filtered,
+  #features = top_genes, Top Cluster Specific
+  features = top_disease_markers, # Top Disease Specific
+  group.by = "condition"
+  #group.by = "seurat_clusters"
+) + RotatedAxis()
+```
+
+```{r STEP6, include=FALSE}
+# Step6: # Perform Pathway Enrichment Analysis
+
+# Load Merged Filtered & Analyzed & Annotated Seurat object at STEP4
+# merged_seurat_filtered <- readRDS(file = "ProcessedData/GSE156776_CrF_filtered_Analyzed_CellTypeAnnot.rds")
+print(merged_seurat_filtered)
+
+# Extract significant genes
+significant_genes <- rownames(markers[markers$p_val_adj < 0.05,])
+
+#if (!requireNamespace("clusterProfiler")) BiocManager::install("clusterProfiler")
+#if (!requireNamespace("org.Hs.eg.db")) BiocManager::install("org.Hs.eg.db")
+library(clusterProfiler)
+library(org.Hs.eg.db)
+
+# Convert gene symbols to Entrez IDs
+entrez_ids <- bitr(
+  significant_genes,
+  fromType = "SYMBOL",
+  toType = "ENTREZID",
+  OrgDb = org.Hs.eg.db
+)
+
+# Perform GO enrichment
+ego <- enrichGO(
+  gene = entrez_ids$ENTREZID,
+  OrgDb = org.Hs.eg.db,
+  ont = "BP",
+  pAdjustMethod = "BH",
+  readable = TRUE
+)
+# Visualize enrichment results
+dotplot(ego)
+
+# Pathway enrichment
+enriched_pathways <- enrichGO(
+  gene = significant_genes,
+  OrgDb = org.Hs.eg.db,
+  keyType = "SYMBOL",
+  ont = "BP", # Biological process
+  pAdjustMethod = "BH",
+  pvalueCutoff = 0.05
+)
+# Visualize enriched pathways
+dotplot(enriched_pathways)
+```
+
+```{r STEP7, include=FALSE}
+# Step7: # Cell-Cell Interaction/Communication Analysis
+
+# Load Merged Filtered & Analyzed & Annotated Seurat object at STEP4
+# merged_seurat_filtered <- readRDS(file = "ProcessedData/GSE156776_CrF_filtered_Analyzed_CellTypeAnnot.rds")
+print(merged_seurat_filtered)
+
+# https://rpubs.com/HHJ/921311
+# Install CellChat
+#if (!requireNamespace("CellChat")) remotes::install_github("sqjin/CellChat")
+library(CellChat)
+
+# Add a new column for modified cluster labels (# To rename 0 ==> Cluster_0)
+merged_seurat_filtered$renamed_clusters <- paste0("Cluster_", merged_seurat_filtered$seurat_clusters)
+# Verify the new labels
+unique(merged_seurat_filtered$renamed_clusters)
+
+# Part I: Data input & processing and initialization of CellChat object
+# Create a CellChat Object
+cellchat <- createCellChat(object = merged_seurat_filtered, group.by = "SingleR_labels", assay = "RNA")
+CellChatDB <- CellChatDB.human # use CellChatDB.mouse if running on mouse data
+showDatabaseCategory(CellChatDB)
+
+# Show the structure of the database
+dplyr::glimpse(CellChatDB$interaction)
+
+# use a subset of CellChatDB for cell-cell communication analysis
+# CellChatDB.use <- subsetDB(CellChatDB, search = "Secreted Signaling") # use Secreted Signaling
+# use all CellChatDB for cell-cell communication analysis
+CellChatDB.use <- CellChatDB # simply use the default CellChatDB
+
+# set the used database in the object
+cellchat@DB <- CellChatDB.use
+
+cellchat <- subsetData(cellchat) # subset the expression data of signaling genes for saving computation cost
+#future::plan("multiprocess", workers = 4) # do parallel
+
+# Part II: Inference of cell-cell communication network
+#Compute the communication probability and infer cellular communication network
+cellchat <- identifyOverExpressedGenes(cellchat)
+cellchat <- identifyOverExpressedInteractions(cellchat)
+cellchat <- projectData(cellchat, PPI.human)
+
+cellchat <- computeCommunProb(cellchat, raw.use = TRUE)
+# Filter out the cell-cell communication if there are only few number of cells in certain cell groups
+cellchat <- filterCommunication(cellchat, min.cells = 10)
+
+cellchat <- computeCommunProbPathway(cellchat)
+cellchat <- aggregateNet(cellchat)
+
+groupSize <- as.numeric(table(cellchat@idents))
+par(mfrow = c(1,2), xpd=TRUE)
+netVisual_circle(cellchat@net$count, vertex.weight = groupSize, weight.scale = T, label.edge= F, title.name = "Number of interactions")
+netVisual_circle(cellchat@net$weight, vertex.weight = groupSize, weight.scale = T, label.edge= F, title.name = "Interaction weights/strength")
+
+mat <- cellchat@net$weight
+for (i in 1:nrow(mat)) {  
+  mat2 <- matrix(0, nrow = nrow(mat), 
+                 ncol = ncol(mat), 
+                 dimnames = dimnames(mat))  
+  mat2[i, ] <- mat[i, ]  
+  netVisual_circle(mat2, vertex.weight = groupSize, weight.scale = T, edge.weight.max = max(mat), title.name = rownames(mat)[i])}
+
+
+#Part III: Visualization of cell-cell communication network
+CellChatDB$interaction$pathway_name #Get pathway names
+pathways.show <- c("CCL") 
+
+par(mfrow=c(1,1))
+netVisual_aggregate(cellchat, signaling = pathways.show, layout = "circle")
+
+vertex.receiver = seq(1,4)
+netVisual_aggregate(cellchat, signaling = pathways.show,  vertex.receiver = vertex.receiver, layout = "hierarchy")
+
+par(mfrow=c(1,1))
+netVisual_heatmap(cellchat, signaling = pathways.show, color.heatmap = "Reds")
+
+# Save RDS file
+saveRDS(merged_seurat_filtered, file = "ProcessedData/FinalProcessed_GSE156776_CrF.rds")
+```
+
+# End
+# For questions contact: Ashok Kumar Sharma
