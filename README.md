@@ -52,10 +52,12 @@ Rscript install.R
 ```
 #### For Manual insatllations
 ```bash
-install.packages("package_name") Or
+install.packages("package_name") OR
+
 if (!requireNamespace("BiocManager", quietly = TRUE))
     install.packages("BiocManager")
-BiocManager::install("package_name") Or
+BiocManager::install("package_name") OR
+
 install.packages("devtools")
 devtools::install_github("username/package_name")
 ```
