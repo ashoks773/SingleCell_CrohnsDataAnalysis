@@ -41,9 +41,31 @@ The analysis uses the following R libraries:
 ---
 ## Getting Started  
 
-### Clone Repository  
+### Installation
+To install the required packages, use the following methods:
+
+#### From `requirements.txt`
+The `requirements.txt` file contains all the necessary packages with specified versions. You can install them by running the provided R script:
+
+```bash
+Rscript install.R
+```
+#### For Manual insatllations
+```bash
+install.packages("package_name") Or
+if (!requireNamespace("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+BiocManager::install("package_name") Or
+install.packages("devtools")
+devtools::install_github("username/package_name")
+```
+### Clone this repository to your local machine:
 ```bash
 git clone https://github.com/yourusername/SingleCell_CrohnAnalysis.git
 cd SingleCell_CrohnAnalysis
+```
+### Contact
+🤚 Important
+For any questions, please contact: 👉 Ashok K. Sharma; ashoks773@gmail.com
 
 
