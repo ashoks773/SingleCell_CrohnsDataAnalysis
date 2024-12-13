@@ -133,3 +133,5 @@ merged_seurat_filtered <- FindClusters(merged_seurat_filtered, verbose = F)
 table(merged_seurat_filtered[[]]$seurat_clusters)
 DimPlot(merged_seurat_filtered, label = T)
 ```
+
+For questions contact: Ashok K. Sharma; compbiosharma@gmail.com
