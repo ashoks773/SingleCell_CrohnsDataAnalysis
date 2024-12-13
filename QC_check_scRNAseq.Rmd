@@ -1,0 +1,135 @@
+---
+title: "# Additional Script: To Practice: Basic Quality control and filtering steps for Single-cell RNA-seq data"
+output: html_document
+date: "2024-12-13"
+by: "Ashok K. Sharma"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r Step1:LoadLibraries, include=FALSE}
+#Step1: Load Libraries
+library(Seurat)
+library(ggplot2)
+library(dplyr)
+library(RColorBrewer)
+```
+
+```{r Step2:LoadObject, include=FALSE}
+#Step2: Load Seurat Object
+merged_seurat_filtered <- readRDS(file = "ProcessedData/GSE156776_CrF.rds")
+VlnPlot(merged_seurat_filtered, features = c("nFeature_RNA","nCount_RNA","mitoPercent","riboPercent"),ncol = 4,pt.size = 0.1) & 
+  theme(plot.title = element_text(size=10))
+FeatureScatter(merged_seurat_filtered, feature1 = "nCount_RNA", feature2 = "mitoPercent")
+FeatureScatter(merged_seurat_filtered, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+FeatureScatter(merged_seurat_filtered, feature1 = "nCount_RNA", feature2 = "riboPercent")
+FeatureScatter(merged_seurat_filtered, feature1 = "riboPercent", feature2 = "mitoPercent")
+
+# Merge Layers
+dim(merged_seurat_filtered) # Check dimension again
+layers <- Layers(merged_seurat_filtered)
+print(layers)
+# Merge Layers
+merged_seurat_filtered <- JoinLayers(merged_seurat_filtered)
+dim(merged_seurat_filtered) # Check dimension again
+```
+
+
+```{r Step3:NormalizationDimentionalityReduction}
+#Step3: Normalization and dimensionality reduction
+merged_seurat_filtered <- NormalizeData(merged_seurat_filtered)
+merged_seurat_filtered <- FindVariableFeatures(merged_seurat_filtered, selection.method = "vst", nfeatures = 2000)
+top10 <- head(VariableFeatures(merged_seurat_filtered), 10)
+top10 
+plot1 <- VariableFeaturePlot(merged_seurat_filtered)
+LabelPoints(plot = plot1, points = top10, repel = TRUE, xnudge = 0, ynudge = 0)
+
+all.genes <- rownames(merged_seurat_filtered)
+merged_seurat_filtered <- ScaleData(merged_seurat_filtered, features = all.genes)
+## Centering and scaling data matrix
+merged_seurat_filtered <- RunPCA(merged_seurat_filtered, features = VariableFeatures(object = merged_seurat_filtered))
+
+VizDimLoadings(merged_seurat_filtered, dims = 1:9, reduction = "pca") & 
+  theme(axis.text=element_text(size=5), axis.title=element_text(size=8,face="bold"))
+DimHeatmap(merged_seurat_filtered, dims = 1:6, nfeatures = 20, cells = 500, balanced = T)
+DimPlot(merged_seurat_filtered, reduction = "pca")
+ElbowPlot(merged_seurat_filtered)
+
+merged_seurat_filtered <- FindNeighbors(merged_seurat_filtered, dims = 1:10)
+merged_seurat_filtered <- FindClusters(merged_seurat_filtered, resolution = 0.5)
+merged_seurat_filtered <- RunUMAP(merged_seurat_filtered, dims = 1:10, verbose = F)
+table(merged_seurat_filtered@meta.data$seurat_clusters)
+DimPlot(merged_seurat_filtered,label.size = 4,repel = T,label = T)
+FeaturePlot(merged_seurat_filtered, features = c("COL1A2", "CD7", "CD79A", "IL32"))
+#FeaturePlot(merged_seurat_filtered, features = "Doublet_score") & theme(plot.title = element_text(size=10))
+FeaturePlot(merged_seurat_filtered, features = "mitoPercent") & theme(plot.title = element_text(size=10))
+FeaturePlot(merged_seurat_filtered, features = "nFeature_RNA") & theme(plot.title = element_text(size=10))
+DimPlot(merged_seurat_filtered,label.size = 4,repel = T,label = T)
+```
+
+```{r Step4:CalcualteCellCycleScores}
+#Step4: Finally, let’s calculate cell cycle scores
+cc.genes.updated.2019
+
+s.genes <- cc.genes.updated.2019$s.genes
+g2m.genes <- cc.genes.updated.2019$g2m.genes
+merged_seurat_filtered <- CellCycleScoring(merged_seurat_filtered, s.features = s.genes, g2m.features = g2m.genes)
+table(merged_seurat_filtered[[]]$Phase)
+
+FeaturePlot(merged_seurat_filtered,features = "mitoPercent",label.size = 4,repel = T,label = T) & 
+  theme(plot.title = element_text(size=10))
+VlnPlot(merged_seurat_filtered,features = "mitoPercent") & theme(plot.title = element_text(size=10))
+
+FeaturePlot(merged_seurat_filtered,features = "riboPercent",label.size = 4,repel = T,label = T) & theme(plot.title = element_text(size=10))
+VlnPlot(merged_seurat_filtered,features = "riboPercent") & theme(plot.title = element_text(size=10))
+
+VlnPlot(merged_seurat_filtered,features = c("nCount_RNA","nFeature_RNA")) & 
+  theme(plot.title = element_text(size=10))
+
+FeaturePlot(merged_seurat_filtered,features = c("S.Score","G2M.Score"),label.size = 4,repel = T,label = T) & 
+  theme(plot.title = element_text(size=10))
+VlnPlot(merged_seurat_filtered,features = c("S.Score","G2M.Score")) & 
+  theme(plot.title = element_text(size=10))
+```
+```{r Step5:CalcualteCellCycleScores}
+# Based on Observed QC; You Can decide the Filtering Criteas: 
+# 1. Load:
+CrF_merged_seurat <- readRDS(file = "ProcessedData/GSE156776_CrF.rds")
+
+# 2. Filter: and then merge Layers
+merged_seurat_filtered <- subset(
+  CrF_merged_seurat,
+  subset = nCount_RNA > 200 & nCount_RNA < 5000 &
+    nFeature_RNA > 200 & nFeature_RNA < 7500 &
+    mitoPercent < 20 #& riboPercent > 20
+)
+merged_seurat_filtered <- JoinLayers(merged_seurat_filtered)
+
+#3. Normalize and Scaling
+merged_seurat_filtered <- NormalizeData(merged_seurat_filtered)
+all.genes <- rownames(merged_seurat_filtered)
+merged_seurat_filtered <- ScaleData(merged_seurat_filtered, features = all.genes)
+
+# 4. Calculate AND ADD cell cycle scores 
+s.genes <- cc.genes.updated.2019$s.genes
+g2m.genes <- cc.genes.updated.2019$g2m.genes
+merged_seurat_filtered <- CellCycleScoring(merged_seurat_filtered, s.features = s.genes, g2m.features = g2m.genes)
+
+# 5. Go for downstream analysis 
+# Single SCTransform command replaces NormalizeData, ScaleData, and FindVariableFeatures. 
+# We can correct for % MT genes and cell cycle scores using vars.to.regress variables; 
+# Based on how much cell cycle score nor MT percentage changes between clusters
+# Decide If you want to regress to keep Biological Signal Intact while removing some unwanted variation
+merged_seurat_filtered <- SCTransform(merged_seurat_filtered, method = "glmGamPoi", ncells = 2697, 
+                    vars.to.regress = c("mitoPercent","S.Score","G2M.Score"), verbose = F)
+
+# Check Downstream Steps:
+merged_seurat_filtered <- RunPCA(merged_seurat_filtered, verbose = F)
+merged_seurat_filtered <- RunUMAP(merged_seurat_filtered, dims = 1:30, verbose = F)
+merged_seurat_filtered <- FindNeighbors(merged_seurat_filtered, dims = 1:30, verbose = F)
+merged_seurat_filtered <- FindClusters(merged_seurat_filtered, verbose = F)
+table(merged_seurat_filtered[[]]$seurat_clusters)
+DimPlot(merged_seurat_filtered, label = T)
+```
