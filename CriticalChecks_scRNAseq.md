@@ -82,4 +82,5 @@ For all visualizations (UMAP, t-SNE, heatmaps):
 **Note**: Instead of relying solely on common pipeines make sure you adjust parameters based on your dataset and understand what each step is doing.
 
 By following this checklist, you can ensure that your scRNA-seq analysis is robust, interpretable, and free from common mistakes.
-Contact: Ashok K. Sharma; **compbiosharma@gmail.com**
+
+For questions contact: Ashok K. Sharma; **compbiosharma@gmail.com**
