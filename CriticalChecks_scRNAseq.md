@@ -1,10 +1,10 @@
-# **Critical Checks for scRNA-seq Data Analysis**
+## **Critical Checks for scRNA-seq Data Analysis**
 
 To get the high qulaity results in the Single-cell RNA-seq data analysis one should make sure avoiding common pitfalls. Here is the detailed checklist provide essential steps and metrics to ensure detailed QC check and at each step.
 
 ---
 
-## **1. QC Metrics**
+### **1. QC Metrics**
 Low quality cells can ruin the results. So its important to carefully assess the quality of your single-cell data. Key parameters are:
 - **Mitochondrial Content**: Cells with high mitochondrial gene percentages might indicate stress or dead cells.
 - **Total UMI Count**: Cells with abnormally low total UMI counts might be doublets or low-quality cells.
@@ -14,7 +14,7 @@ Low quality cells can ruin the results. So its important to carefully assess the
 
 ---
 
-## **2. Normalization Methods**
+### **2. Normalization Methods**
 Normalization is a stardard practice for any given dataset however over-normalization can distort the biological signals. Here are few key considerations to ensure proper data normalization:
 - Use scaling approaches compatible with downstream analysis tools (e.g., log-normalization or SCTransform).
 - Check the effect of normalization on preserving biological signals.
@@ -22,14 +22,14 @@ Normalization is a stardard practice for any given dataset however over-normaliz
 
 ---
 
-## **3. Dimensionality Reduction**
+### **3. Dimensionality Reduction**
 Before clustering, inspect dimensionality reduction steps:
 - Perform PCA and inspect elbow plots to select an appropriate number of PCs.
 - Verify that UMAP or t-SNE clusters reflect meaningful biology rather than batch effects.
 
 ---
 
-## **4. Batch Correction**
+### **4. Batch Correction**
 If you’re working with multiple datasets:
 - Assess batch effects using tools like **Harmony**, **Seurat**, or **Scanorama**.
 - Ensure biological signal is preserved while batch effects are removed.
@@ -38,7 +38,7 @@ If you’re working with multiple datasets:
 
 ---
 
-## **5. Clustering**
+### **5. Clustering**
 Clustering is an useful unsupervised method for pattern recongnition. However, its importat to select the proper clustering method as well as the Resolution.
 - If the ressolution is **too low** then we can miss the rare populations.
 - If the ressolution is **too high** then we get meaningless splits.
@@ -48,7 +48,7 @@ Clustering is an useful unsupervised method for pattern recongnition. However, i
 
 ---
 
-## **6. Differential Gene Expression (DGE)**
+### **6. Differential Gene Expression (DGE)**
 For robust DGE analysis:
 - Use appropriate statistical tests (e.g., Wilcoxon rank-sum test).
 - Correct for multiple testing (e.g., FDR).
@@ -56,7 +56,7 @@ For robust DGE analysis:
 
 ---
 
-## **7. Annotation**
+### **7. Annotation**
 Annotate clusters carefully:
 - Use marker gene databases (e.g., PanglaoDB, CellMarker) to identify cell types.
 - Manually review annotations to ensure accuracy.
@@ -64,15 +64,15 @@ Annotate clusters carefully:
 
 ---
 
-## **8. Integration **
+### **8. Integration**
 When combining datasets: purpose is remove batchc effects to properly align different datasets. 
-* Following integration methods can be used: Feature based; Dimentionality reduction based; Anchor based; Graph based; Matrix factorization and Neural Networks
+- Following integration methods can be used: Feature based; Dimentionality reduction based; Anchor based; Graph based; Matrix factorization and Neural Networks
 - Evaluate integration quality with metrics like **ARI**, **Silhoette** score, **kBET**, and/or **LISI**. 
 - Check that cell types are well-mixed across batches after integration. By checking if same type of cells are cluster together and/or degree of mixing between batches
 
 ---
 
-## **9. Visualization**
+### **9. Visualization**
 For all visualizations (UMAP, t-SNE, heatmaps):
 - Ensure proper scaling and normalization.
 - Label plots clearly for interpretation and reproducibility.
