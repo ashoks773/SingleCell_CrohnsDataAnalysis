@@ -67,7 +67,6 @@ git clone https://github.com/yourusername/SingleCell_CrohnAnalysis.git
 cd SingleCell_CrohnAnalysis
 ```
 ### Contact
-🤚 Important
 For any questions, please contact: 👉 Ashok K. Sharma; ashoks773@gmail.com
 
 
